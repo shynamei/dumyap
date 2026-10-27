@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Thought Bestie",
+  "name": "dumyap",
   "version": "0.1.0",
   "description": "Voice-first, context-aware note capture on any webpage.",
   "action": {
     "default_popup": "src/popup/index.html",
-    "default_title": "Thought Bestie"
+    "default_title": "dumyap"
   },
   "content_scripts": [
     {

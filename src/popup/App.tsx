@@ -8,7 +8,7 @@ export default function App() {
           💭
         </span>
         <div>
-          <h1 className="text-lg font-semibold leading-tight">Thought Bestie</h1>
+          <h1 className="text-lg font-semibold leading-tight">dumyap</h1>
           <p className="text-xs text-slate-500">
             Highlight, speak, and organize your thoughts on any page.
           </p>
