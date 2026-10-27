@@ -4,20 +4,55 @@
 // button near the selection. Clearing the selection or clicking elsewhere
 // dismisses the button.
 //
-// Scope note: this build only surfaces the button. It does not record audio,
-// transcribe, call any service, or read/store the selected text or page
-// content. The click handler is a placeholder.
+// Scope note: on mic click, the content script captures only a bounded slice
+// of context (the selected text, page URL, title, timestamp) and hands it to
+// the service worker, which opens the extension-owned recorder page. Recording
+// itself happens there, not in this content script. No full-page content is
+// collected and nothing is sent to any external service.
 
 import { FloatingMicButton } from "./floatingMicButton";
-import { getSelectionAnchor, isSelectionInEditable } from "./selection";
+import {
+  getSelectedText,
+  getSelectionAnchor,
+  isSelectionInEditable,
+} from "./selection";
+import type { OpenRecorderMessage } from "../shared/messages";
 
 function init(): void {
   console.debug("[dumyap] content script loaded.");
 
   const micButton = new FloatingMicButton({
     onClick: () => {
-      // Placeholder: recording/transcription will hook in here later.
-      console.debug("[dumyap] mic button clicked (no-op for now).");
+      const selectedText = getSelectedText();
+      if (!selectedText) {
+        // Selection was lost before the click resolved; nothing to capture.
+        micButton.hide();
+        return;
+      }
+
+      const message: OpenRecorderMessage = {
+        type: "dumyap:open-recorder",
+        context: {
+          selectedText,
+          url: location.href,
+          title: document.title,
+          timestamp: Date.now(),
+        },
+      };
+
+      chrome.runtime.sendMessage(message, () => {
+        // Access lastError to avoid an unchecked-error console warning if the
+        // service worker is momentarily unavailable.
+        if (chrome.runtime.lastError) {
+          console.warn(
+            "[dumyap] could not open recorder:",
+            chrome.runtime.lastError.message,
+          );
+        }
+      });
+
+      // Dismiss the button once capture has been handed off.
+      micButton.hide();
     },
   });
   micButton.mount();
