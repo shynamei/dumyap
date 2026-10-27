@@ -7,11 +7,22 @@
     "default_popup": "src/popup/index.html",
     "default_title": "dumyap"
   },
+  "permissions": ["storage"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/recorder/index.html", "assets/*"],
+      "matches": ["<all_urls>"]
     }
   ],
   "icons": {

@@ -17,12 +17,21 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: resolve(__dirname, "src/popup/index.html"),
+        recorder: resolve(__dirname, "src/recorder/index.html"),
         content: resolve(__dirname, "src/content/content.ts"),
+        "service-worker": resolve(
+          __dirname,
+          "src/background/service-worker.ts",
+        ),
       },
       output: {
-        // Keep content script at a fixed path; hash other chunks/assets.
-        entryFileNames: (chunk) =>
-          chunk.name === "content" ? "content.js" : "assets/[name]-[hash].js",
+        // Keep the content script and service worker at fixed paths so the
+        // manifest can reference them reliably; hash other chunks/assets.
+        entryFileNames: (chunk) => {
+          if (chunk.name === "content") return "content.js";
+          if (chunk.name === "service-worker") return "service-worker.js";
+          return "assets/[name]-[hash].js";
+        },
         chunkFileNames: "assets/[name]-[hash].js",
         assetFileNames: "assets/[name]-[hash][extname]",
       },

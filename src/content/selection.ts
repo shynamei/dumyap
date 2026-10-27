@@ -39,6 +39,15 @@ export function getSelectionAnchor(): SelectionAnchor | null {
 }
 
 /**
+ * Returns the currently selected text, trimmed. Called only in response to a
+ * deliberate user action (clicking the mic), which is when capturing the
+ * selected text is the intended behavior.
+ */
+export function getSelectedText(): string {
+  return window.getSelection()?.toString().trim() ?? "";
+}
+
+/**
  * True if the selection sits inside an editable field. We skip showing the
  * button there to avoid interfering with typing/editing.
  */
