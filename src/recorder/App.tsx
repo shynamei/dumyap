@@ -1,21 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CaptureContext } from "../shared/messages";
+import type { VoiceNote } from "../shared/note";
+import { addNote, NoteStorageError } from "../shared/db";
+import { formatDuration } from "../shared/format";
 import { loadCaptureContext } from "./context";
-import { useAudioRecorder } from "./useAudioRecorder";
+import { useAudioRecorder, type Recording } from "./useAudioRecorder";
 
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
+type SaveState =
+  | { status: "idle" }
+  | { status: "saving" }
+  | { status: "saved" }
+  | { status: "error"; message: string };
 
 export default function App() {
   const [context, setContext] = useState<CaptureContext | null>(null);
   const [contextLoaded, setContextLoaded] = useState(false);
-  const { phase, elapsedMs, audioUrl, error, start, stop, cancel } =
+  const { phase, elapsedMs, audioUrl, recording, error, start, stop, cancel } =
     useAudioRecorder();
   const autoStarted = useRef(false);
+  const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
 
   // Pull the preserved context once on mount.
   useEffect(() => {
@@ -51,6 +54,38 @@ export default function App() {
     closeWindow();
   };
 
+  // Save is only ever triggered by an explicit click. The saveState guard plus
+  // the disabled button prevent duplicate saves of the same recording.
+  const handleSave = useCallback(
+    async (rec: Recording) => {
+      if (saveState.status === "saving" || saveState.status === "saved") return;
+      setSaveState({ status: "saving" });
+
+      const note: VoiceNote = {
+        id: crypto.randomUUID(),
+        audio: rec.blob,
+        selectedText: context?.selectedText ?? "",
+        url: context?.url ?? "",
+        title: context?.title ?? "",
+        createdAt: context?.timestamp ?? Date.now(),
+        durationMs: rec.durationMs,
+        mimeType: rec.mimeType,
+      };
+
+      try {
+        await addNote(note);
+        setSaveState({ status: "saved" });
+      } catch (err) {
+        const message =
+          err instanceof NoteStorageError
+            ? err.message
+            : "Could not save the note.";
+        setSaveState({ status: "error", message });
+      }
+    },
+    [context, saveState.status],
+  );
+
   return (
     <div className="flex min-h-screen w-full flex-col gap-3 bg-slate-50 p-4 text-slate-800">
       <header className="flex items-center gap-2">
@@ -79,10 +114,13 @@ export default function App() {
       <Controls
         phase={phase}
         audioUrl={audioUrl}
+        recording={recording}
+        saveState={saveState}
         onStop={() => void stop()}
         onCancel={handleCancel}
         onRetry={() => void start()}
         onClose={closeWindow}
+        onSave={handleSave}
       />
 
       <Footer context={context} />
@@ -115,7 +153,7 @@ function StatusArea({
             <span className="text-sm font-medium text-red-600">Recording</span>
           </div>
           <span className="font-mono text-2xl tabular-nums text-slate-800">
-            {formatElapsed(elapsedMs)}
+            {formatDuration(elapsedMs)}
           </span>
         </>
       )}
@@ -130,7 +168,7 @@ function StatusArea({
             Recording ready
           </span>
           <span className="font-mono text-xl tabular-nums text-slate-700">
-            {formatElapsed(elapsedMs)}
+            {formatDuration(elapsedMs)}
           </span>
         </>
       )}
@@ -151,17 +189,23 @@ function StatusArea({
 function Controls({
   phase,
   audioUrl,
+  recording,
+  saveState,
   onStop,
   onCancel,
   onRetry,
   onClose,
+  onSave,
 }: {
   phase: string;
   audioUrl: string | null;
+  recording: Recording | null;
+  saveState: SaveState;
   onStop: () => void;
   onCancel: () => void;
   onRetry: () => void;
   onClose: () => void;
+  onSave: (rec: Recording) => void;
 }) {
   if (phase === "recording") {
     return (
@@ -184,17 +228,44 @@ function Controls({
     );
   }
 
-  if (phase === "recorded" && audioUrl) {
+  if (phase === "recorded" && audioUrl && recording) {
+    const saved = saveState.status === "saved";
+    const saving = saveState.status === "saving";
     return (
       <div className="flex flex-col gap-2">
         {/* Native controls give play/pause/scrub for review. */}
         <audio src={audioUrl} controls className="w-full" />
+
+        {saved ? (
+          <p
+            className="rounded-md bg-emerald-50 px-3 py-2 text-center text-sm font-medium text-emerald-700"
+            role="status"
+          >
+            ✓ Note saved. Find it in the dumyap popup.
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onSave(recording)}
+            disabled={saving}
+            className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "Saving…" : "Save note"}
+          </button>
+        )}
+
+        {saveState.status === "error" && (
+          <p className="text-center text-xs font-medium text-red-600" role="alert">
+            {saveState.message}
+          </p>
+        )}
+
         <button
           type="button"
           onClick={onClose}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
         >
-          Done
+          {saved ? "Done" : "Discard & close"}
         </button>
       </div>
     );
