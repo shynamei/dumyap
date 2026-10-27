@@ -11,6 +11,8 @@ import {
   type RecorderErrorKind,
 } from "./audioRecorder";
 
+export type { RecorderErrorKind };
+
 export type RecorderPhase =
   | "idle" // not yet started
   | "requesting" // asking for mic permission
@@ -24,10 +26,18 @@ export interface RecorderErrorState {
   message: string;
 }
 
+export interface Recording {
+  blob: Blob;
+  mimeType: string;
+  durationMs: number;
+}
+
 export interface UseAudioRecorder {
   phase: RecorderPhase;
   elapsedMs: number;
   audioUrl: string | null;
+  /** Available once phase === "recorded": the finished audio + metadata. */
+  recording: Recording | null;
   error: RecorderErrorState | null;
   start: () => Promise<void>;
   stop: () => Promise<void>;
@@ -43,6 +53,7 @@ export function useAudioRecorder(): UseAudioRecorder {
   const [phase, setPhase] = useState<RecorderPhase>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [recording, setRecording] = useState<Recording | null>(null);
   const [error, setError] = useState<RecorderErrorState | null>(null);
 
   const stopTimer = useCallback(() => {
@@ -63,6 +74,7 @@ export function useAudioRecorder(): UseAudioRecorder {
     setError(null);
     revokeUrl();
     setAudioUrl(null);
+    setRecording(null);
     setElapsedMs(0);
     setPhase("requesting");
 
@@ -96,13 +108,21 @@ export function useAudioRecorder(): UseAudioRecorder {
     setPhase("stopping");
     stopTimer();
 
+    const durationMs = Date.now() - startedAtRef.current;
+
     try {
-      const blob = await recorder.stop();
+      const result = await recorder.stop();
       recorderRef.current = null;
-      if (blob) {
-        const url = URL.createObjectURL(blob);
+      if (result) {
+        setElapsedMs(durationMs);
+        const url = URL.createObjectURL(result.blob);
         audioUrlRef.current = url;
         setAudioUrl(url);
+        setRecording({
+          blob: result.blob,
+          mimeType: result.mimeType,
+          durationMs,
+        });
         setPhase("recorded");
       } else {
         setError({
@@ -128,6 +148,7 @@ export function useAudioRecorder(): UseAudioRecorder {
     stopTimer();
     revokeUrl();
     setAudioUrl(null);
+    setRecording(null);
     setElapsedMs(0);
     setError(null);
     setPhase("idle");
@@ -143,5 +164,5 @@ export function useAudioRecorder(): UseAudioRecorder {
     };
   }, [revokeUrl, stopTimer]);
 
-  return { phase, elapsedMs, audioUrl, error, start, stop, cancel };
+  return { phase, elapsedMs, audioUrl, recording, error, start, stop, cancel };
 }

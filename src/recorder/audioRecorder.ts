@@ -12,6 +12,11 @@ export type RecorderErrorKind =
   | "unsupported"
   | "unknown";
 
+export interface RecordingResult {
+  blob: Blob;
+  mimeType: string;
+}
+
 export class RecorderError extends Error {
   constructor(
     public kind: RecorderErrorKind,
@@ -124,10 +129,10 @@ export class AudioRecorder {
   }
 
   /**
-   * Stops recording and resolves with the recorded audio Blob. Microphone
-   * tracks are released. Resolves with null if nothing was captured.
+   * Stops recording and resolves with the recorded audio plus its MIME type.
+   * Microphone tracks are released. Resolves with null if nothing was captured.
    */
-  stop(): Promise<Blob | null> {
+  stop(): Promise<RecordingResult | null> {
     return new Promise((resolve, reject) => {
       const recorder = this.recorder;
       if (!recorder) {
@@ -139,11 +144,13 @@ export class AudioRecorder {
         "stop",
         () => {
           const type = this.mimeType ?? "audio/webm";
-          const blob =
-            this.chunks.length > 0 ? new Blob(this.chunks, { type }) : null;
+          const result =
+            this.chunks.length > 0
+              ? { blob: new Blob(this.chunks, { type }), mimeType: type }
+              : null;
           this.cleanupStream();
           this.recorder = null;
-          resolve(blob);
+          resolve(result);
         },
         { once: true },
       );

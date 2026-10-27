@@ -2,13 +2,13 @@
 
 A voice-first, context-aware Chromium (Manifest V3) browser extension for
 capturing and organizing thoughts on any webpage. This is an **early build** —
-selection capture and local voice recording work; transcription, AI
-organization, and storage are not implemented yet.
+selection capture, local voice recording, and persistent local note storage
+work; transcription and AI organization are not implemented yet.
 
 ## What's here
 
-- **Popup UI** (React + TypeScript + Tailwind CSS v4) showing the product name,
-  a short description, and a placeholder for saved notes.
+- **Popup UI** (React + TypeScript + Tailwind CSS v4) with a functional list of
+  saved notes.
 - **Text selection detection** in the content script: highlighting non-empty
   text on a page shows a small floating microphone button near the selection.
   Clearing the selection or clicking elsewhere dismisses it.
@@ -16,11 +16,15 @@ organization, and storage are not implemented yet.
   URL, title, and a timestamp, then opens a small recorder window where you can
   record a spoken thought, watch an elapsed timer, stop or cancel, and play the
   audio back.
+- **Persistent local storage.** After recording, a **Save note** button stores
+  the audio and its context in IndexedDB. Saved notes appear in the popup
+  (newest first) with the page title, a text preview, date, and duration; each
+  can be replayed, opened at its source page, or deleted.
 - **Vite** build that outputs a loadable unpacked extension to `dist/`.
 
-Recordings stay entirely local (in memory, as a `Blob`). No audio or page
-context is uploaded anywhere. Transcription, AI organization, note storage,
-authentication, and cloud services are not implemented yet.
+Everything stays local. Audio and page context live in the browser's IndexedDB
+on your machine — nothing is uploaded. Transcription, AI organization,
+authentication, cloud storage, and export are not implemented yet.
 
 ### How recording works (architecture)
 
@@ -143,6 +147,47 @@ released. Verify the OS/browser **recording indicator turns off** (the dot in
 the Chrome tab strip / the system mic indicator). The content script never
 touches the microphone — only the recorder page does.
 
+## Manual testing: saving and managing notes
+
+Saved notes are stored in IndexedDB (database `dumyap`, object store `notes`),
+local to your Chrome profile.
+
+1. **Save a note.** Record and click **Stop**, then click **Save note**. A
+   green "Note saved" confirmation replaces the button. The **Save note** button
+   is disabled while saving and does not reappear afterward, so a single
+   recording can't be saved twice. Click **Done** to close.
+2. **See it in the popup.** Click the dumyap toolbar icon. The note appears with
+   the page title, a two-line preview of the selected text, the date, and the
+   duration. Recording more notes puts the newest at the top.
+3. **Replay.** Press play on a note's audio player in the popup.
+4. **Open the source.** Click **Open ↗** to reopen the original page in a new
+   tab.
+5. **Delete.** Click **Delete**, then confirm with **Delete** (or back out with
+   **Keep**). The note disappears from the list.
+6. **Cancelled recordings are never saved.** Record, click **Cancel** — no note
+   is added to the popup.
+
+### Persistence checks
+
+- Close the recorder and reopen the popup — the saved note is still there.
+- Close and reopen the popup several times — notes persist.
+- **Restart Chrome**, then open the popup — notes survive a full restart
+  (IndexedDB is on-disk, unlike the in-memory session storage used only to hand
+  context to the recorder).
+
+### Empty / loading / error states
+
+- With no notes saved, the popup shows an **empty state** ("No notes yet").
+- On open, a brief **"Loading notes…"** state shows while IndexedDB opens.
+- If the database can't be read, an **error state** with a **Retry** button
+  appears instead of a blank list.
+
+### Storage inspection (optional)
+
+In the popup's DevTools (right-click the popup → Inspect), open **Application →
+IndexedDB → dumyap → notes** to see stored records. Each holds the audio blob
+plus `selectedText`, `url`, `title`, `createdAt`, `durationMs`, and `mimeType`.
+
 ## Project structure
 
 ```
@@ -160,7 +205,7 @@ touches the microphone — only the recorder page does.
 │   │   ├── floatingMicButton.ts # Shadow-DOM isolated mic button UI
 │   │   └── selection.ts         # Selection geometry / text helpers
 │   ├── recorder/
-│   │   ├── App.tsx              # Recorder UI (status/timer/stop/cancel/play)
+│   │   ├── App.tsx              # Recorder UI (timer/stop/cancel/play/save)
 │   │   ├── audioRecorder.ts     # Framework-agnostic recording logic
 │   │   ├── context.ts           # Loads capture context from session storage
 │   │   ├── index.css
@@ -169,13 +214,18 @@ touches the microphone — only the recorder page does.
 │   │   └── useAudioRecorder.ts  # React hook: recorder lifecycle + timer
 │   ├── popup/
 │   │   ├── components/
-│   │   │   └── NotesPlaceholder.tsx
+│   │   │   ├── NoteItem.tsx      # One saved note: playback, link, delete
+│   │   │   └── NotesList.tsx     # Notes list + loading/empty/error states
 │   │   ├── App.tsx
 │   │   ├── index.css            # Tailwind entry (@import "tailwindcss")
 │   │   ├── index.html           # Popup HTML entry
-│   │   └── main.tsx             # React mount
+│   │   ├── main.tsx             # React mount
+│   │   └── useNotes.ts          # React hook: load + delete saved notes
 │   └── shared/
-│       └── messages.ts          # Shared message + context types
+│       ├── db.ts                # IndexedDB data layer (CRUD + errors)
+│       ├── format.ts            # Duration / date formatting helpers
+│       ├── messages.ts          # Shared message + context types
+│       └── note.ts              # VoiceNote record type
 ├── vite.config.ts
 └── tsconfig.json
 ```
@@ -183,11 +233,14 @@ touches the microphone — only the recorder page does.
 ## Permissions
 
 - **`storage`** — the only declared manifest permission. Used for
-  `chrome.storage.session` to pass the capture context from the content script
-  to the recorder window in memory (cleared when the browser closes).
+  `chrome.storage.session` to hand the capture context to the recorder window
+  in memory (cleared when the browser closes).
+- **IndexedDB** (saved notes) needs no manifest permission — it's standard web
+  storage, local to the browser profile and on-disk so notes survive restarts.
 - The content script matches `<all_urls>` so it can detect selections on pages.
   Passive detection reads only the selection's position and emptiness; the
-  selected text is read only when you deliberately click the microphone.
+  selected text is read only when you deliberately click the microphone. The
+  full page is never stored.
 - **Microphone access** is a runtime browser permission (prompted on first
   record), not a manifest permission. Audio never leaves the device.
 

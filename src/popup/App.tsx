@@ -1,4 +1,4 @@
-import NotesPlaceholder from "./components/NotesPlaceholder";
+import NotesList from "./components/NotesList";
 
 export default function App() {
   return (
@@ -19,11 +19,11 @@ export default function App() {
         <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
           Saved notes
         </h2>
-        <NotesPlaceholder />
+        <NotesList />
       </section>
 
       <footer className="border-t border-slate-200 pt-2 text-[10px] text-slate-400">
-        v0.1.0 · foundation build
+        v0.1.0 · notes stored locally in your browser
       </footer>
     </div>
   );
