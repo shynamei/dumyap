@@ -16,7 +16,117 @@ import {
   getSelectionAnchor,
   isSelectionInEditable,
 } from "./selection";
-import type { OpenRecorderMessage } from "../shared/messages";
+import { SelectionOverlay, type ViewportRect } from "./selectionOverlay";
+import { cropViewportRegion } from "./captureCrop";
+import type {
+  CaptureVisibleTabResponse,
+  OpenRecorderMessage,
+  RuntimeMessage,
+} from "../shared/messages";
+
+/** True once the extension context has been invalidated (e.g. reloaded). */
+function isContextInvalidated(): boolean {
+  try {
+    // Accessing runtime.id throws when the context is gone.
+    return !chrome.runtime?.id;
+  } catch {
+    return true;
+  }
+}
+
+// Only one selection session at a time.
+let captureActive = false;
+
+function startAreaCapture(): void {
+  if (captureActive) return;
+  captureActive = true;
+
+  const overlay = new SelectionOverlay({
+    onCancel: () => {
+      overlay.destroy();
+      captureActive = false;
+    },
+    onSelect: (rect) => {
+      void completeCapture(overlay, rect);
+    },
+  });
+  overlay.mount();
+}
+
+async function completeCapture(
+  overlay: SelectionOverlay,
+  rect: ViewportRect,
+): Promise<void> {
+  // Hide our own UI so it isn't included in the captured pixels, then wait two
+  // animation frames for the browser to actually repaint before capturing.
+  overlay.hideVisual();
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+
+  try {
+    if (isContextInvalidated()) {
+      throw new Error("The dumyap extension was reloaded. Please try again.");
+    }
+
+    const response = (await chrome.runtime.sendMessage({
+      type: "dumyap:capture-visible-tab",
+    } satisfies RuntimeMessage)) as CaptureVisibleTabResponse | undefined;
+
+    if (!response?.ok || !response.dataUrl) {
+      throw new Error(response?.error ?? "Screenshot capture failed.");
+    }
+
+    const screenshotDataUrl = await cropViewportRegion(response.dataUrl, rect);
+
+    const openMessage: OpenRecorderMessage = {
+      type: "dumyap:open-recorder",
+      context: {
+        selectedText: "",
+        url: location.href,
+        title: document.title,
+        timestamp: Date.now(),
+        screenshotDataUrl,
+      },
+    };
+    await chrome.runtime.sendMessage(openMessage);
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Could not capture the region.";
+    console.warn("[dumyap] area capture failed:", message);
+    // Surface a lightweight, non-blocking notice to the user.
+    showTransientNotice(message);
+  } finally {
+    overlay.destroy();
+    captureActive = false;
+  }
+}
+
+/** Shows a brief, self-dismissing toast via an isolated Shadow DOM host. */
+function showTransientNotice(text: string): void {
+  const host = document.createElement("div");
+  Object.assign(host.style, {
+    position: "fixed",
+    top: "16px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: "2147483647",
+  } satisfies Partial<CSSStyleDeclaration>);
+  const shadow = host.attachShadow({ mode: "open" });
+  const note = document.createElement("div");
+  note.textContent = `dumyap: ${text}`;
+  Object.assign(note.style, {
+    background: "rgba(127, 29, 29, 0.95)",
+    color: "#fff",
+    font: "13px system-ui, sans-serif",
+    padding: "8px 14px",
+    borderRadius: "8px",
+    boxShadow: "0 2px 10px rgba(0,0,0,0.3)",
+  } satisfies Partial<CSSStyleDeclaration>);
+  shadow.appendChild(note);
+  (document.body ?? document.documentElement).appendChild(host);
+  setTimeout(() => host.remove(), 4000);
+}
 
 function init(): void {
   console.debug("[dumyap] content script loaded.");
@@ -116,6 +226,15 @@ function init(): void {
   };
   window.addEventListener("scroll", reposition, true);
   window.addEventListener("resize", reposition);
+
+  // Popup -> content script: begin in-page region selection.
+  chrome.runtime.onMessage.addListener((message: RuntimeMessage) => {
+    if (message.type === "dumyap:start-capture") {
+      startAreaCapture();
+    }
+    // No async response needed.
+    return false;
+  });
 }
 
 if (document.body) {

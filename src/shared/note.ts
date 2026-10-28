@@ -18,4 +18,17 @@ export interface VoiceNote {
   durationMs: number;
   /** Audio MIME type (e.g. "audio/webm;codecs=opus"). */
   mimeType: string;
+  /**
+   * Optional cropped screenshot (visual notes only). Stored as a Blob.
+   * Absent on text-based notes created before this feature — code must treat
+   * it as optional for backward compatibility.
+   */
+  screenshot?: Blob;
+  /** MIME type of the screenshot Blob, when present (e.g. "image/png"). */
+  screenshotMimeType?: string;
+}
+
+/** A note is "visual" when it carries a screenshot. */
+export function isVisualNote(note: VoiceNote): boolean {
+  return note.screenshot instanceof Blob;
 }

@@ -2,8 +2,9 @@
 
 A voice-first, context-aware Chromium (Manifest V3) browser extension for
 capturing and organizing thoughts on any webpage. This is an **early build** —
-selection capture, local voice recording, and persistent local note storage
-work; transcription and AI organization are not implemented yet.
+text selection capture, screen-region capture, local voice recording, and
+persistent local note storage work; transcription and AI organization are not
+implemented yet.
 
 ## What's here
 
@@ -16,14 +17,21 @@ work; transcription and AI organization are not implemented yet.
   URL, title, and a timestamp, then opens a small recorder window where you can
   record a spoken thought, watch an elapsed timer, stop or cancel, and play the
   audio back.
+- **Screen-region capture (visual notes).** A **Capture area** button in the
+  popup starts an **in-page selection overlay** directly on the webpage. You
+  drag a rectangle over the page, dumyap captures just that region, and the
+  existing recorder window opens to annotate it with voice. Capture only ever
+  happens on an explicit click — nothing is captured automatically.
 - **Persistent local storage.** After recording, a **Save note** button stores
-  the audio and its context in IndexedDB. Saved notes appear in the popup
-  (newest first) with the page title, a text preview, date, and duration; each
-  can be replayed, opened at its source page, or deleted.
+  the audio, any screenshot, and the context in IndexedDB. Saved notes appear
+  in the popup (newest first), tagged **Text** or **Visual**, with the page
+  title, a text preview or screenshot thumbnail, date, and duration; each can be
+  replayed, opened at its source page, or deleted.
 - **Vite** build that outputs a loadable unpacked extension to `dist/`.
 
-Everything stays local. Audio and page context live in the browser's IndexedDB
-on your machine — nothing is uploaded. Transcription, AI organization,
+Everything stays local. Audio, screenshots, and page context live in the
+browser's IndexedDB on your machine — nothing is uploaded. Screenshot capture
+and cropping happen entirely in the browser. Transcription, AI organization,
 authentication, cloud storage, and export are not implemented yet.
 
 ### How recording works (architecture)
@@ -39,6 +47,28 @@ recording runs in an extension-owned page instead:
    permission prompt can appear and `MediaRecorder` can run.
 3. The recorder page reads its context, requests the mic, records, and offers
    playback. Microphone tracks are stopped on stop, cancel, or close.
+
+Screen capture happens **in the page**, not in a separate window:
+
+1. On your **Capture area** click, the popup messages the active tab's content
+   script to start selection, then closes so the webpage is fully visible.
+2. The content script shows a lightweight, Shadow-DOM-isolated overlay that
+   dims the page and blocks page interaction. You drag a rectangle; **Escape**
+   or **Cancel** aborts.
+3. On release, the content script **hides its own overlay first** (so dumyap's
+   UI isn't in the shot), waits for the browser to repaint, then asks the
+   service worker to `chrome.tabs.captureVisibleTab` — which `activeTab`
+   permits because you invoked the extension via the popup.
+4. The content script crops the selected region from the returned screenshot on
+   a canvas. Crop coordinates are scaled by `screenshot.naturalWidth /
+   window.innerWidth`, so the result stays aligned under any device pixel ratio
+   or page/browser zoom. The overlay is captured in viewport (`position:
+   fixed`) coordinates, matching the visible-tab screenshot.
+5. It sends the cropped PNG to the service worker, which opens the **recorder
+   window** — a visible, extension-origin context where the microphone prompt
+   can appear and `MediaRecorder` can run (this is required by MV3; recording
+   can't happen in the content script). You record, preview, and save; the note
+   stores the cropped screenshot, audio, URL, title, timestamp, and duration.
 
 ## Tech stack
 
@@ -147,6 +177,46 @@ released. Verify the OS/browser **recording indicator turns off** (the dot in
 the Chrome tab strip / the system mic indicator). The content script never
 touches the microphone — only the recorder page does.
 
+## Manual testing: screen capture + visual notes
+
+1. On a normal webpage, open the dumyap popup and click **Capture area**. The
+   popup closes and a **dimmed selection overlay** appears directly over the
+   page, with a "Drag to capture a region" hint.
+2. **Drag** a rectangle over the region you want. On release, the overlay
+   disappears and the **recorder window** opens showing a **thumbnail** of the
+   captured region at the top.
+3. Chrome prompts for the microphone (first time) and recording starts.
+   **Stop**, play back, then **Save note**. The cropped image is saved with the
+   recording.
+4. Open the popup — the new note is tagged **Visual** and shows a **screenshot
+   thumbnail**. Click the thumbnail to open the full image in a new tab; replay
+   the audio; **Open ↗** reopens the source page; **Delete** (with confirm)
+   removes it.
+
+Crop alignment and edge cases to try:
+
+- **Crop matches the selection:** the saved thumbnail should contain exactly
+  what you dragged over — and **none of dumyap's overlay** (the overlay is
+  hidden before pixels are captured).
+- **DPR / zoom:** on a HiDPI display or with the page zoomed in/out, the crop
+  should still match your selection (coordinates are scaled by the screenshot's
+  natural width over the CSS viewport width).
+- **Escape / Cancel:** press **Escape** or click **Cancel (Esc)** mid-selection
+  — the overlay vanishes and you're back to normal browsing with nothing saved.
+- **Page interaction is blocked:** while the overlay is up, clicks/links on the
+  page underneath should not fire.
+- **Tiny drags** (a click or a few pixels) are ignored and cancel the overlay,
+  so you don't get an empty crop.
+- **Unsupported pages:** try **Capture area** on a `chrome://` page or the
+  Chrome Web Store — the popup shows a clear "this page can't be captured"
+  message instead of failing. On a normal page that loaded before the extension
+  was installed/reloaded, you may see "reload the page and try again" (the
+  content script isn't injected yet).
+- **Recorder cancel:** during annotation, **Cancel** / **Discard & close**
+  closes the window without saving — no visual note is added.
+- **Scrolling:** capture reflects the **currently visible** viewport. Scroll to
+  what you want visible before clicking Capture area.
+
 ## Manual testing: saving and managing notes
 
 Saved notes are stored in IndexedDB (database `dumyap`, object store `notes`),
@@ -187,6 +257,7 @@ local to your Chrome profile.
 In the popup's DevTools (right-click the popup → Inspect), open **Application →
 IndexedDB → dumyap → notes** to see stored records. Each holds the audio blob
 plus `selectedText`, `url`, `title`, `createdAt`, `durationMs`, and `mimeType`.
+Visual notes additionally carry a `screenshot` blob and `screenshotMimeType`.
 
 ## Project structure
 
@@ -199,13 +270,16 @@ plus `selectedText`, `url`, `title`, `createdAt`, `durationMs`, and `mimeType`.
 │   └── make-icons.mjs           # Regenerates placeholder PNG icons
 ├── src/
 │   ├── background/
-│   │   └── service-worker.ts    # Opens the recorder window, relays context
+│   │   └── service-worker.ts    # captureVisibleTab + opens the recorder window
 │   ├── content/
-│   │   ├── content.ts           # Selection events + mic button + capture
+│   │   ├── content.ts           # Selection events, mic button, area-capture
+│   │   ├── captureCrop.ts       # DPR/zoom-aware viewport crop → PNG data URL
 │   │   ├── floatingMicButton.ts # Shadow-DOM isolated mic button UI
-│   │   └── selection.ts         # Selection geometry / text helpers
+│   │   ├── selection.ts         # Selection geometry / text helpers
+│   │   └── selectionOverlay.ts  # In-page drag-to-select overlay (Shadow DOM)
 │   ├── recorder/
-│   │   ├── App.tsx              # Recorder UI (timer/stop/cancel/play/save)
+│   │   ├── App.tsx              # Voice recorder page
+│   │   ├── RecorderPanel.tsx    # Shared record/preview/save UI (+screenshot)
 │   │   ├── audioRecorder.ts     # Framework-agnostic recording logic
 │   │   ├── context.ts           # Loads capture context from session storage
 │   │   ├── index.css
@@ -214,9 +288,10 @@ plus `selectedText`, `url`, `title`, `createdAt`, `durationMs`, and `mimeType`.
 │   │   └── useAudioRecorder.ts  # React hook: recorder lifecycle + timer
 │   ├── popup/
 │   │   ├── components/
-│   │   │   ├── NoteItem.tsx      # One saved note: playback, link, delete
+│   │   │   ├── NoteItem.tsx      # One saved note: thumbnail/playback/delete
 │   │   │   └── NotesList.tsx     # Notes list + loading/empty/error states
-│   │   ├── App.tsx
+│   │   ├── App.tsx              # Popup: Capture area button + notes list
+│   │   ├── capture.ts           # Tells the active tab to start selection
 │   │   ├── index.css            # Tailwind entry (@import "tailwindcss")
 │   │   ├── index.html           # Popup HTML entry
 │   │   ├── main.tsx             # React mount
@@ -225,18 +300,23 @@ plus `selectedText`, `url`, `title`, `createdAt`, `durationMs`, and `mimeType`.
 │       ├── db.ts                # IndexedDB data layer (CRUD + errors)
 │       ├── format.ts            # Duration / date formatting helpers
 │       ├── messages.ts          # Shared message + context types
-│       └── note.ts              # VoiceNote record type
+│       └── note.ts              # VoiceNote record type (+ optional screenshot)
 ├── vite.config.ts
 └── tsconfig.json
 ```
 
 ## Permissions
 
-- **`storage`** — the only declared manifest permission. Used for
-  `chrome.storage.session` to hand the capture context to the recorder window
-  in memory (cleared when the browser closes).
-- **IndexedDB** (saved notes) needs no manifest permission — it's standard web
-  storage, local to the browser profile and on-disk so notes survive restarts.
+- **`storage`** — used for `chrome.storage.session` to hand the capture context
+  (including the cropped screenshot, as a data URL) to the recorder window in
+  memory (cleared when the browser closes).
+- **`activeTab`** — grants one-time access to the current tab when you invoke
+  the extension via the popup, which is what `chrome.tabs.captureVisibleTab`
+  requires. No broad host permission is requested; capture only runs on your
+  explicit **Capture area** click and only for the active tab.
+- **IndexedDB** (saved notes, including screenshots) needs no manifest
+  permission — it's standard web storage, local to the browser profile and
+  on-disk so notes survive restarts.
 - The content script matches `<all_urls>` so it can detect selections on pages.
   Passive detection reads only the selection's position and emptiness; the
   selected text is read only when you deliberately click the microphone. The
