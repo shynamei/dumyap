@@ -37,8 +37,32 @@ async function openRecorderWindow(context: CaptureContext): Promise<void> {
   });
 }
 
+async function captureSenderTab(
+  sender: chrome.runtime.MessageSender,
+): Promise<string> {
+  const windowId = sender.tab?.windowId;
+  // activeTab was granted when the user opened the popup on this tab, so
+  // capturing the visible area here is permitted.
+  return chrome.tabs.captureVisibleTab(
+    windowId ?? chrome.windows.WINDOW_ID_CURRENT,
+    { format: "png" },
+  );
+}
+
 chrome.runtime.onMessage.addListener(
-  (message: RuntimeMessage, _sender, sendResponse) => {
+  (message: RuntimeMessage, sender, sendResponse) => {
+    if (message.type === "dumyap:capture-visible-tab") {
+      captureSenderTab(sender)
+        .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
+        .catch((err: unknown) => {
+          const error =
+            err instanceof Error ? err.message : "Could not capture the tab.";
+          console.error("[dumyap] captureVisibleTab failed:", err);
+          sendResponse({ ok: false, error });
+        });
+      return true; // async response
+    }
+
     if (message.type === "dumyap:open-recorder") {
       openRecorderWindow(message.context)
         .then(() => sendResponse({ ok: true }))

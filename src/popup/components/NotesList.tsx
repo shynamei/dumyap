@@ -37,7 +37,8 @@ export default function NotesList() {
         </span>
         <p className="text-sm font-medium text-slate-600">No notes yet</p>
         <p className="text-xs text-slate-400">
-          Highlight text on a page and record a thought to save it here.
+          Highlight text or use “Capture area” to record a thought and save it
+          here.
         </p>
       </div>
     );

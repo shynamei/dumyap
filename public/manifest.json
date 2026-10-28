@@ -7,7 +7,7 @@
     "default_popup": "src/popup/index.html",
     "default_title": "dumyap"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "activeTab"],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"

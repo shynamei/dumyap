@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { VoiceNote } from "../../shared/note";
+import { isVisualNote } from "../../shared/note";
 import { formatDate, formatDuration } from "../../shared/format";
 
 export default function NoteItem({
@@ -21,6 +22,17 @@ export default function NoteItem({
     return () => URL.revokeObjectURL(audioUrl);
   }, [audioUrl]);
 
+  // Screenshot object URL for visual notes (undefined for text notes).
+  const screenshotUrl = useMemo(
+    () => (note.screenshot ? URL.createObjectURL(note.screenshot) : null),
+    [note.screenshot],
+  );
+  useEffect(() => {
+    if (!screenshotUrl) return;
+    return () => URL.revokeObjectURL(screenshotUrl);
+  }, [screenshotUrl]);
+
+  const visual = isVisualNote(note);
   const preview = note.selectedText.trim();
 
   return (
@@ -33,7 +45,16 @@ export default function NoteItem({
           >
             {note.title || "Untitled page"}
           </p>
-          <p className="text-[11px] text-slate-400">
+          <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
+            <span
+              className={`rounded px-1 py-px text-[9px] font-semibold uppercase ${
+                visual
+                  ? "bg-indigo-100 text-indigo-700"
+                  : "bg-slate-100 text-slate-500"
+              }`}
+            >
+              {visual ? "Visual" : "Text"}
+            </span>
             {formatDate(note.createdAt)} · {formatDuration(note.durationMs)}
           </p>
         </div>
@@ -49,6 +70,22 @@ export default function NoteItem({
           </a>
         ) : null}
       </div>
+
+      {screenshotUrl ? (
+        <a
+          href={screenshotUrl}
+          target="_blank"
+          rel="noreferrer noopener"
+          title="Open full screenshot"
+          className="block overflow-hidden rounded-md border border-slate-200"
+        >
+          <img
+            src={screenshotUrl}
+            alt="Captured region"
+            className="max-h-28 w-full object-contain"
+          />
+        </a>
+      ) : null}
 
       {preview ? (
         <blockquote className="line-clamp-2 border-l-2 border-slate-200 pl-2 text-xs text-slate-500">
