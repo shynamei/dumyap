@@ -109,6 +109,41 @@ export async function addNote(note: VoiceNote): Promise<void> {
   });
 }
 
+/**
+ * Updates an existing note (by id). Used to attach/edit a transcript without
+ * touching the original audio or screenshot. Uses `put`, which inserts or
+ * replaces the record keyed by `id`.
+ */
+export async function updateNote(note: VoiceNote): Promise<void> {
+  const db = await openDb();
+  return new Promise<void>((resolve, reject) => {
+    let tx: IDBTransaction;
+    try {
+      tx = db.transaction(STORE, "readwrite");
+    } catch (err) {
+      reject(new NoteStorageError("write", "Could not start an update.", err));
+      return;
+    }
+
+    tx.objectStore(STORE).put(note);
+
+    tx.oncomplete = () => resolve();
+    tx.onabort = tx.onerror = () => {
+      const err = tx.error;
+      const isQuota = err?.name === "QuotaExceededError";
+      reject(
+        new NoteStorageError(
+          isQuota ? "quota" : "write",
+          isQuota
+            ? "Not enough local storage space to save the change."
+            : "Could not save the change.",
+          err,
+        ),
+      );
+    };
+  });
+}
+
 /** Returns all notes, newest first. */
 export async function getAllNotes(): Promise<VoiceNote[]> {
   const db = await openDb();

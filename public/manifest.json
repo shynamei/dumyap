@@ -8,6 +8,7 @@
     "default_title": "dumyap"
   },
   "permissions": ["storage", "activeTab"],
+  "host_permissions": ["http://127.0.0.1:8787/*"],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"

@@ -2,7 +2,7 @@ import { useNotes } from "../useNotes";
 import NoteItem from "./NoteItem";
 
 export default function NotesList() {
-  const { status, notes, error, reload, remove } = useNotes();
+  const { status, notes, error, reload, remove, saveTranscript } = useNotes();
 
   if (status === "loading") {
     return (
@@ -53,7 +53,12 @@ export default function NotesList() {
       ) : null}
       <ul className="flex max-h-96 flex-col gap-2 overflow-auto">
         {notes.map((note) => (
-          <NoteItem key={note.id} note={note} onDelete={remove} />
+          <NoteItem
+            key={note.id}
+            note={note}
+            onDelete={remove}
+            onSaveTranscript={saveTranscript}
+          />
         ))}
       </ul>
     </>
