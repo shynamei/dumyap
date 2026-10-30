@@ -2,9 +2,9 @@
 
 A voice-first, context-aware Chromium (Manifest V3) browser extension for
 capturing and organizing thoughts on any webpage. This is an **early build** —
-text selection capture, screen-region capture, local voice recording, and
-persistent local note storage work; transcription and AI organization are not
-implemented yet.
+text selection capture, screen-region capture, local voice recording,
+persistent local note storage, and opt-in speech-to-text transcription work;
+AI organization is not implemented yet.
 
 ## What's here
 
@@ -27,6 +27,12 @@ implemented yet.
   in the popup (newest first), tagged **Text** or **Visual**, with the page
   title, a text preview or screenshot thumbnail, date, and duration; each can be
   replayed, opened at its source page, or deleted.
+- **Opt-in transcription (OpenAI `gpt-transcribe`).** A **Transcribe** button on
+  each saved note sends its audio — only on your explicit click, and only after
+  a confirmation notice — to a **local backend** (`server/`) that holds the
+  OpenAI key and calls the API. The verbatim transcript (English, Filipino, or
+  natural Taglish code-switching, never translated) is saved onto the note, and
+  you can edit it in place. The extension never contains or sees the API key.
 - **Vite** build that outputs a loadable unpacked extension to `dist/`.
 
 Everything stays local. Audio, screenshots, and page context live in the
@@ -107,6 +113,61 @@ npm install
 
 After rebuilding, click the reload icon on the extension card in
 `chrome://extensions` to pick up changes.
+
+## Transcription backend (`server/`)
+
+Transcription is handled by a **local-only** Node/Express backend that holds
+your OpenAI key and calls the `gpt-transcribe` API. The key lives only in the
+server environment — never in the extension, its storage, or its logs. The
+server binds to `127.0.0.1` and is not exposed publicly.
+
+### One-time setup
+
+1. Get your extension's id from `chrome://extensions` (shown on the dumyap
+   card after loading `dist/`).
+2. Configure the server:
+
+   ```bash
+   cd server
+   npm install
+   cp .env.example .env      # Windows: copy .env.example .env
+   ```
+
+3. Edit `server/.env`:
+   - Set `OPENAI_API_KEY` to your key.
+   - Set `ALLOWED_ORIGINS` to `chrome-extension://<your-extension-id>` (the id
+     from step 1). This is the CORS allow-list; `*` is not accepted. Use a
+     comma-separated list of `chrome-extension://<id>` values with **no trailing
+     slash** (surrounding whitespace and trailing slashes are tolerated and
+     normalized away, but the canonical form is bare `chrome-extension://<id>`).
+
+   `.env` is git-ignored; `.env.example` is the only env file committed.
+
+   Troubleshooting CORS: if the extension popup can't reach the backend, start
+   it once with `DEBUG_CORS=1` to log the exact `Origin` header the browser
+   sends, then make sure it matches an `ALLOWED_ORIGINS` entry. `DEBUG_CORS`
+   logs only the Origin header — never the request body or any secret — and
+   should be left off in normal use.
+
+### Start the backend
+
+```bash
+cd server
+npm start          # or: npm run dev  (restarts on file changes)
+```
+
+It listens on `http://127.0.0.1:8787`. Check it with:
+
+```bash
+curl http://127.0.0.1:8787/health      # -> {"ok":true}
+```
+
+The extension talks only to `http://127.0.0.1:8787` (declared in
+`host_permissions`). Keep the server running while you use **Transcribe**.
+
+Guardrails: requests are limited to ~10/minute per client, audio uploads are
+capped at 25 MB, only audio MIME types are accepted, and the server exits on
+startup if `OPENAI_API_KEY` is missing.
 
 ## Manual testing: floating microphone button
 
@@ -217,6 +278,45 @@ Crop alignment and edge cases to try:
 - **Scrolling:** capture reflects the **currently visible** viewport. Scroll to
   what you want visible before clicking Capture area.
 
+## Manual testing: transcription
+
+Requires the backend running with a valid `OPENAI_API_KEY` (see
+"Transcription backend"). These steps use live API calls.
+
+1. **Transcribe.** On a saved note in the popup, click **Transcribe**. A
+   confirmation notice appears explaining that audio will be sent to OpenAI via
+   your local server. Click **Send to OpenAI**. A "Transcribing…" indicator
+   shows, then the transcript appears under the audio player.
+2. **No translation / no summarizing.** The transcript should be the words **as
+   spoken**, verbatim — not translated to English, not shortened.
+3. **Language checklist** — record and transcribe one note for each:
+   - **English:** e.g. "This paragraph is confusing, we should rewrite it."
+   - **Filipino/Tagalog:** e.g. "Ang hirap basahin nitong bahagi, pakiayos."
+   - **Taglish (code-switching):** e.g. "Okay naman yung intro pero this
+     section needs more examples, medyo kulang."
+     The transcript should keep the mix exactly, not force everything into one
+     language.
+4. **Edit.** Click **Edit**, change the text, click **Save**. The edit replaces
+   the stored transcript.
+5. **Persistence.** Close the popup and reopen it — the transcript (and your
+   edits) are still shown. **Restart Chrome** and reopen — still there.
+6. **No re-call on reopen.** Reopening the popup must **not** trigger a new API
+   request; the stored transcript is just displayed. Only **Transcribe** /
+   **Re-transcribe** calls the API.
+7. **Duplicate prevention.** While "Transcribing…" is showing, the button is
+   gone/disabled — you can't fire a second request for the same note.
+
+Failure cases to try:
+
+- **Backend down:** stop the server, then click Transcribe — you get "Can't
+  reach the dumyap transcription server…".
+- **Invalid key:** put a bad `OPENAI_API_KEY` in `server/.env`, restart the
+  server, transcribe — you get an "invalid or missing" key message.
+- **Insufficient credits:** with a key that has no quota, you get an
+  "insufficient credits" message.
+- **Rate limiting:** more than ~10 requests in a minute returns a "too many
+  requests" message.
+
 ## Manual testing: saving and managing notes
 
 Saved notes are stored in IndexedDB (database `dumyap`, object store `notes`),
@@ -258,6 +358,7 @@ In the popup's DevTools (right-click the popup → Inspect), open **Application 
 IndexedDB → dumyap → notes** to see stored records. Each holds the audio blob
 plus `selectedText`, `url`, `title`, `createdAt`, `durationMs`, and `mimeType`.
 Visual notes additionally carry a `screenshot` blob and `screenshotMimeType`.
+Transcribed notes carry a `transcript` string and `transcribedAt` timestamp.
 
 ## Project structure
 
@@ -289,18 +390,27 @@ Visual notes additionally carry a `screenshot` blob and `screenshotMimeType`.
 │   ├── popup/
 │   │   ├── components/
 │   │   │   ├── NoteItem.tsx      # One saved note: thumbnail/playback/delete
-│   │   │   └── NotesList.tsx     # Notes list + loading/empty/error states
+│   │   │   ├── NotesList.tsx     # Notes list + loading/empty/error states
+│   │   │   └── TranscriptSection.tsx # Transcribe button, transcript + edit
 │   │   ├── App.tsx              # Popup: Capture area button + notes list
 │   │   ├── capture.ts           # Tells the active tab to start selection
 │   │   ├── index.css            # Tailwind entry (@import "tailwindcss")
 │   │   ├── index.html           # Popup HTML entry
 │   │   ├── main.tsx             # React mount
-│   │   └── useNotes.ts          # React hook: load + delete saved notes
+│   │   └── useNotes.ts          # React hook: load/delete/transcript save
 │   └── shared/
 │       ├── db.ts                # IndexedDB data layer (CRUD + errors)
 │       ├── format.ts            # Duration / date formatting helpers
 │       ├── messages.ts          # Shared message + context types
-│       └── note.ts              # VoiceNote record type (+ optional screenshot)
+│       ├── note.ts              # VoiceNote record type (+ screenshot/transcript)
+│       └── transcribe.ts        # Client → local backend transcription call
+├── server/                      # Local-only transcription backend
+│   ├── src/
+│   │   ├── config.js            # Env-based config (key, model, limits, CORS)
+│   │   ├── index.js             # Express app: POST /transcribe, /health
+│   │   └── rateLimit.js         # In-memory per-IP rate limiter
+│   ├── .env.example             # Template; copy to .env (git-ignored)
+│   └── package.json
 ├── vite.config.ts
 └── tsconfig.json
 ```
@@ -322,6 +432,11 @@ Visual notes additionally carry a `screenshot` blob and `screenshotMimeType`.
   selected text is read only when you deliberately click the microphone. The
   full page is never stored.
 - **Microphone access** is a runtime browser permission (prompted on first
-  record), not a manifest permission. Audio never leaves the device.
+  record), not a manifest permission. Audio by itself never leaves the device.
+- **`host_permissions: http://127.0.0.1:8787/*`** — lets the popup reach the
+  **local** transcription backend. This is the only outbound network target,
+  and audio is sent to it only when you explicitly click **Transcribe**. The
+  OpenAI key lives only in the backend's environment; it is never in the
+  extension, its storage, or its logs.
 
 More permissions will be added only as corresponding features land.

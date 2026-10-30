@@ -26,6 +26,13 @@ export interface VoiceNote {
   screenshot?: Blob;
   /** MIME type of the screenshot Blob, when present (e.g. "image/png"). */
   screenshotMimeType?: string;
+  /**
+   * Transcript text (opt-in speech-to-text). Absent until the user explicitly
+   * transcribes the note; may be edited by the user afterwards.
+   */
+  transcript?: string;
+  /** When the transcript was first produced, epoch milliseconds. */
+  transcribedAt?: number;
 }
 
 /** A note is "visual" when it carries a screenshot. */

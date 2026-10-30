@@ -2,13 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import type { VoiceNote } from "../../shared/note";
 import { isVisualNote } from "../../shared/note";
 import { formatDate, formatDuration } from "../../shared/format";
+import TranscriptSection from "./TranscriptSection";
 
 export default function NoteItem({
   note,
   onDelete,
+  onSaveTranscript,
 }: {
   note: VoiceNote;
   onDelete: (id: string) => void;
+  onSaveTranscript: (id: string, transcript: string) => Promise<void>;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -94,6 +97,8 @@ export default function NoteItem({
       ) : null}
 
       <audio src={audioUrl} controls className="h-8 w-full" />
+
+      <TranscriptSection note={note} onSaveTranscript={onSaveTranscript} />
 
       {confirming ? (
         <div className="flex items-center gap-2">
